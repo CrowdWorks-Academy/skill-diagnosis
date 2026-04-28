@@ -48,6 +48,21 @@
       "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif;
   }
 
+  /* ===== iframe 埋め込み対応 =====
+   * 親サイトに全画面 iframe で重ねて配置される想定。
+   *  - html / body は背景を transparent にし、空き領域は親サイトを透視させる
+   *  - html / body / ルートコンテナは pointer-events: none で「クリックを素通し」
+   *  - 表示中のオーバーレイ(.cwa-overlay)だけ pointer-events: auto に戻す
+   *  - 親サイト側は postMessage の {type:'cwa_shindan_show'/'cwa_shindan_hide'}
+   *    を受信して iframe 自体の pointer-events を auto/none に切替える */
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    pointer-events: none;
+    height: 100%;
+  }
+
   /* ===== Root containers ===== */
   .cwa-shindan-root,
   .cwa-shindan-root *,
@@ -59,6 +74,7 @@
     font-family: var(--font-stack);
     color: var(--color-text);
     -webkit-text-size-adjust: 100%;
+    pointer-events: none;            /* 子の .cwa-overlay で auto に戻す */
   }
 
   /* ===== Overlay (shared) ===== */
@@ -71,6 +87,7 @@
     align-items: center;
     justify-content: center;
     padding: 16px;
+    pointer-events: auto;            /* iframe下でも操作可能に戻す */
     animation: cwaFadeIn 0.25s ease-out both;
   }
   .cwa-overlay[hidden] { display: none !important; }
@@ -797,7 +814,7 @@
    *   調整時はここだけ触ればOK。
    * ============================================================ */
   const CONFIG = {
-    BANNER_DELAY_MS: 10000,
+    BANNER_DELAY_MS: 7000,             /* ページ読込から 7 秒後にバナー表示 */
     BANNER_REHIDE_DAYS: 7,
     LOADING_DURATION_MS: 5000,
     QUESTION_TRANSITION_MS: 350,
@@ -924,18 +941,37 @@
   window.__cwaDecideResult = decideResult;
 
   /* ============================================================
-   * GA4 helper (gtag.jsが無い環境でも安全に動作)
+   * 親フレームへの postMessage 通信
+   *   iframe 内に置かれている前提。親(STUDIOサイト)が以下を受信:
+   *     { type: 'cwa_shindan_show'    }   表示開始(iframeをpointer-events:autoへ)
+   *     { type: 'cwa_shindan_hide'    }   表示終了(iframeをpointer-events:noneへ)
+   *     { type: 'cwa_shindan_ga_event', name, params }   GA4イベント転送
+   *   非iframe(スタンドアロン)環境では parent === window のため何もしない。
+   * ============================================================ */
+  function notifyParent(type, payload) {
+    payload = payload || {};
+    try {
+      if (window.parent && window.parent !== window) {
+        const msg = Object.assign({ type: type }, payload);
+        window.parent.postMessage(msg, '*');
+      }
+    } catch (e) { /* ignore (cross-origin等) */ }
+  }
+  function notifyShow() { notifyParent('cwa_shindan_show'); }
+  function notifyHide() { notifyParent('cwa_shindan_hide'); }
+
+  /* ============================================================
+   * GA4 helper
+   *   iframe内では親サイトのgtagに直接アクセスできないため、
+   *   親フレームへ postMessage で転送し、親サイト側で gtag('event', ...)
+   *   を呼ぶ責務を持たせる。
    * ============================================================ */
   function trackEvent(eventName, params) {
     params = params || {};
-    try {
-      if (typeof window.gtag === 'function') {
-        window.gtag('event', eventName, params);
-      }
-    } catch (e) { /* ignore */ }
+    notifyParent('cwa_shindan_ga_event', { name: eventName, params: params });
     // 開発時の確認用
     if (window.console && console.log) {
-      console.log('[GA4]', eventName, params);
+      console.log('[GA4 via postMessage]', eventName, params);
     }
   }
 
@@ -1067,6 +1103,9 @@
   function showBanner() {
     if (!shouldShowBanner()) return;
     $bannerOverlay.hidden = false;
+    /* iframe親へ「表示開始」を通知。
+       親はこの瞬間から iframe を pointer-events:auto に切替える */
+    notifyShow();
     lockBodyScroll();
     trapFocus($bannerOverlay);
     setTimeout(function () {
@@ -1083,7 +1122,11 @@
     if (closedByUser) {
       lsSet(CONFIG.LS_KEY_CLOSED_AT, Date.now());
       trackEvent('shindan_banner_closed');
+      /* バナーを ✕ で完全離脱 → 親に hide 通知(7日間再表示しない) */
+      notifyHide();
     }
+    /* closedByUser=false (CTA経由)の場合は診断モーダルへ遷移するため
+       表示状態は維持(notifyHideは送信しない) */
   }
 
   $bannerStart.addEventListener('click', function () {
@@ -1191,6 +1234,8 @@
     $modalOverlay.hidden = true;
     unlockBodyScroll();
     releaseTrap();
+    /* 診断モーダルから ✕ で離脱 → 親に hide 通知 */
+    notifyHide();
   }
 
   $btnYes.addEventListener('click', function () { answerQuestion(true); });
@@ -1294,6 +1339,10 @@
     $resultOverlay.hidden = true;
     unlockBodyScroll();
     releaseTrap();
+    /* 結果モーダルが ✕ で閉じられた → 診断ツールUIが消えたため hide 通知。
+       LINE誘導をクリックした場合は別タブが開くだけで結果モーダルは残るため、
+       ここが唯一のフロー終端となる。 */
+    notifyHide();
   }
 
   $resultClose.addEventListener('click', closeResult);
