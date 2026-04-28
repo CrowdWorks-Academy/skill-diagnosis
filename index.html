@@ -814,13 +814,25 @@
    *   調整時はここだけ触ればOK。
    * ============================================================ */
   const CONFIG = {
-    BANNER_DELAY_MS: 7000,             /* ページ読込から 7 秒後にバナー表示 */
-    BANNER_REHIDE_DAYS: 7,
+    BANNER_DELAY_MS: 7000,                       /* ページ読込から 7 秒後にバナー表示 */
+
+    /* バナー再表示ブロック期間(時間単位):
+     *   ✕で閉じた人  → 24時間後に再度バナー表示
+     *   完了した人   → 168時間(7日)後に再度バナー表示
+     * 判定優先度: 完了者 > ✕クローズ */
+    BANNER_REHIDE_AFTER_CLOSE_HOURS:    24,
+    BANNER_REHIDE_AFTER_COMPLETE_HOURS: 168,
+
     LOADING_DURATION_MS: 5000,
     QUESTION_TRANSITION_MS: 350,
 
-    LS_KEY_CLOSED_AT: 'cwa_shindan_closed_at',
-    LS_KEY_COMPLETED: 'cwa_shindan_completed',
+    /* localStorage キー:
+     *   閉じた時刻 / 完了した時刻 を unixtime(ms) で保存し、
+     *   現在時刻との差で再表示判定する。 */
+    LS_KEY_CLOSED_AT:    'cwa_shindan_closed_at',
+    LS_KEY_COMPLETED_AT: 'cwa_shindan_completed_at',
+    /* 後方互換: 旧バージョンで真偽値 'true' を保存していたキー(初回起動時にクリア) */
+    LS_KEY_LEGACY_COMPLETED: 'cwa_shindan_completed',
 
     QUESTIONS: [
       '本を読むことに苦手意識はありますか？',
@@ -986,14 +998,46 @@
     try { window.localStorage.setItem(key, String(value)); }
     catch (e) { /* private mode等で失敗しても無視 */ }
   }
+  function lsRemove(key) {
+    try { window.localStorage.removeItem(key); }
+    catch (e) { /* ignore */ }
+  }
 
+  /* 後方互換: 旧キー(真偽値 'true' の cwa_shindan_completed)が残っていれば、
+   *   新方式 (cwa_shindan_completed_at に unixtime) に移行してから旧キーを削除。
+   *   旧データは「いつ完了したか不明」なので現在時刻に丸める(過剰ブロック防止)。 */
+  (function migrateLegacyCompletedFlag() {
+    if (lsGet(CONFIG.LS_KEY_LEGACY_COMPLETED) === 'true') {
+      if (!lsGet(CONFIG.LS_KEY_COMPLETED_AT)) {
+        lsSet(CONFIG.LS_KEY_COMPLETED_AT, Date.now());
+      }
+      lsRemove(CONFIG.LS_KEY_LEGACY_COMPLETED);
+    }
+  })();
+
+  /* バナー表示判定:
+   *   優先度1: 完了者 → 完了時刻から 168時間(7日)未満なら非表示
+   *   優先度2: ✕クローズ → 閉じた時刻から 24時間未満なら非表示
+   *   いずれでもなければ表示する */
   function shouldShowBanner() {
-    if (lsGet(CONFIG.LS_KEY_COMPLETED) === 'true') return false;
+    const now = Date.now();
+    const HOUR_MS = 60 * 60 * 1000;
+
+    /* 1) 完了者ブロック (最優先) */
+    const completedAt = parseInt(lsGet(CONFIG.LS_KEY_COMPLETED_AT) || '0', 10);
+    if (completedAt > 0) {
+      const elapsedH = (now - completedAt) / HOUR_MS;
+      if (elapsedH < CONFIG.BANNER_REHIDE_AFTER_COMPLETE_HOURS) return false;
+    }
+
+    /* 2) ✕クローズブロック */
     const closedAt = parseInt(lsGet(CONFIG.LS_KEY_CLOSED_AT) || '0', 10);
-    if (!closedAt) return true;
-    const elapsedMs = Date.now() - closedAt;
-    const rehideMs = CONFIG.BANNER_REHIDE_DAYS * 24 * 60 * 60 * 1000;
-    return elapsedMs >= rehideMs;
+    if (closedAt > 0) {
+      const elapsedH = (now - closedAt) / HOUR_MS;
+      if (elapsedH < CONFIG.BANNER_REHIDE_AFTER_CLOSE_HOURS) return false;
+    }
+
+    return true;
   }
 
   /* ============================================================
@@ -1327,8 +1371,9 @@
     trapFocus($resultOverlay);
     renderIcons();
 
-    // 完了フラグ保存
-    lsSet(CONFIG.LS_KEY_COMPLETED, 'true');
+    /* 完了時刻を保存(unixtime ms)。
+     * 168時間(7日)経過するまで shouldShowBanner で false を返す。 */
+    lsSet(CONFIG.LS_KEY_COMPLETED_AT, Date.now());
 
     trackEvent('shindan_completed', { result_job: job.label });
 
