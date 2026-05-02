@@ -887,34 +887,41 @@
     TIE_BREAK_ORDER:
       ['video', 'webdesign', 'secretary', 'sns', 'writing', 'website'],
 
-    /* ベーススコア(出現比率調整のため。仕様±1で微調整済) */
+    /* ベーススコア
+     * 運用1週間(LINE友だち213人)の実測比率を踏まえた最終調整版(2026-05-03):
+     *   動画編集 過剰検出を抑え、Webデザインを目標寄りに引き戻し、
+     *   オンライン秘書とWebサイト制作の底上げを実施。
+     *   SNS強化は Q4 YES sns +4 に集約することで、ベース値の二重補正を回避。 */
     BASE_SCORES: {
-      video: 3, webdesign: 2, secretary: 0,
-      sns: 0,   writing: 1,   website: 1
+      video: 3, webdesign: 2, secretary: 1,
+      sns: 0, writing: 1,   website: 1
     },
 
     /* 質問ごとの加点表(YES/NO別)
-     * 64パターンシミュレーションの結果、目標比率(動画50%/WD20%/秘書10%/
-     * SNS10%/ライ5%/制作5%)に概ね一致するよう±1で調整済。
-     * 質問の意味と職種特性の自然な紐付けは保持(例:Q5=ラッピング→Webデザイン)。
+     * 2026-05-03 最終調整(提案J):
+     *   Q1 NO writing 4 (Webライティング底上げ、0回回避)
+     *   Q3 YES webdesign 3 (デザイン補強、計画性=設計力連想)
+     *   Q4 YES sns 3 (二重補正回避)
+     *   Q5 YES webdesign 2 + video 1 (Webデザイン抑制 + 動画維持)
+     *   Q2 / Q6 / その他は変更なし
      */
     SCORING_RULES: [
       // Q1: 本を読むことに苦手意識はありますか？
       { yes: { video: 2, sns: 1 },
-        no:  { writing: 3, secretary: 1, website: 1 } },
+        no:  { writing: 4, secretary: 1, website: 1 } },
       // Q2: 料理をするときレシピをしっかり見る方？
       { yes: { secretary: 2, website: 2 },
         no:  { video: 1, sns: 1 } },
       // Q3: 旅行は事前に細かく計画する方？
-      // (調整: secretary 2->1, webdesign 1->2 / 計画性=Webデザインの設計力にも紐付け)
-      { yes: { secretary: 1, website: 1, webdesign: 2 },
+      // (計画性 = 設計力としてWebデザインをここで補強)
+      { yes: { secretary: 1, website: 1, webdesign: 3 },
         no:  { video: 2, sns: 1 } },
       // Q4: スマホに新しいアプリを入れるのは好き？
       { yes: { sns: 3, video: 1, website: 1 },
         no:  { secretary: 2, writing: 1 } },
       // Q5: プレゼントのラッピングにもこだわる？
-      // (調整: video +1 を削除 / ラッピング志向は Webデザイン に集中)
-      { yes: { webdesign: 3 },
+      // (ラッピング志向は WebデザインとUI/動画ビジュアル両方)
+      { yes: { webdesign: 2, video: 1 },
         no:  { secretary: 1, writing: 1, website: 1 } },
       // Q6: 大人数より少人数の方が好き？
       { yes: { video: 1, writing: 1, website: 1, secretary: 1 },
